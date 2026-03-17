@@ -11,8 +11,13 @@ public class PlayerController : NetworkBehaviour
     public float moveSpeed = 5f;
     public float rotationSpeed = 720f;
 
+    [Header("Jump Settings")]
+    public float jumpForce = 5f;
+    public LayerMask groundLayer;
+
     private Rigidbody rb;
     private Vector3 inputVector;
+    private bool grounded;
 
     private void Awake()
     {
@@ -33,20 +38,24 @@ public class PlayerController : NetworkBehaviour
     {
         if (!IsOwner) return;
 
-        // Get player input
         float h = Input.GetAxis("Horizontal");
         float v = Input.GetAxis("Vertical");
         inputVector = new Vector3(h, 0, v).normalized;
 
-        // If host, move immediately (because host is the server)
+        // Movement
         if (IsServer)
         {
             MovePlayer(inputVector);
         }
         else
         {
-            // If client, send input to server
             SubmitMovementServerRpc(new Vector2(h, v));
+        }
+
+        // Jump input (DO NOT check grounded here)
+        if (Input.GetButtonDown("Jump"))
+        {
+            RequestJumpServerRpc();
         }
     }
 
@@ -61,10 +70,38 @@ public class PlayerController : NetworkBehaviour
     {
         if (moveInput.sqrMagnitude < 0.001f) return;
 
-        Vector3 targetPos = rb.position + moveInput * moveSpeed * Time.fixedDeltaTime;
+        Vector3 targetPos = rb.position + moveInput * moveSpeed * Time.deltaTime;
         rb.MovePosition(targetPos);
 
         Quaternion targetRot = Quaternion.LookRotation(moveInput, Vector3.up);
         rb.MoveRotation(Quaternion.RotateTowards(rb.rotation, targetRot, rotationSpeed * Time.deltaTime));
+    }
+
+    [ServerRpc]
+    private void RequestJumpServerRpc()
+    {
+        if (!grounded) return;
+
+        rb.AddForce(Vector3.up * jumpForce, ForceMode.Impulse);
+    }
+
+    private void OnCollisionStay(Collision collision)
+    {
+        if (!IsServer) return;
+
+        if ((groundLayer.value & (1 << collision.gameObject.layer)) != 0)
+        {
+            grounded = true;
+        }
+    }
+
+    private void OnCollisionExit(Collision collision)
+    {
+        if (!IsServer) return;
+
+        if ((groundLayer.value & (1 << collision.gameObject.layer)) != 0)
+        {
+            grounded = false;
+        }
     }
 }

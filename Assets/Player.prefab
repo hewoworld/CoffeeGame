@@ -414,6 +414,10 @@ MonoBehaviour:
   m_EditorClassIdentifier: 
   moveSpeed: 10
   rotationSpeed: 720
+  jumpForce: 5
+  groundLayer:
+    serializedVersion: 2
+    m_Bits: 8
 --- !u!1 &8208165682479500755
 GameObject:
   m_ObjectHideFlags: 0
