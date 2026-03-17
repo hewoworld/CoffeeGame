@@ -176,6 +176,14 @@ public class NetworkedPlayerAdvanced : NetworkBehaviour
         rb.AddForce(moveSpeed * Time.deltaTime * -rb.velocity.normalized * (crouching ? slideCounterMovement : counterMovement));
     }
 
+    private void OnTriggerEnter(Collider other)
+    {
+        if(other.gameObject.CompareTag("Respawn"))
+        {
+            Vector3 newPos = new Vector3(0, 0, 0);
+            transform.position = newPos;
+        }
+    }
     private void OnCollisionStay(Collision other)
     {
         if ((whatIsGround.value & (1 << other.gameObject.layer)) == 0) return;
