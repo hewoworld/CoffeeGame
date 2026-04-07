@@ -19,23 +19,21 @@ public class NetworkedPlayerAdvanced : NetworkBehaviour
     [Header("Movement Settings")]
     public float moveSpeed = 4500f;
     public float maxSpeed = 20f;
-    public float counterMovement = 0.175f;
+    public float counterMovement = 0.05f;
     public float slideForce = 400f;
-    public float slideCounterMovement = 0.2f;
+    public float slideCounterMovement = 0.05f;
     public float jumpForce = 550f;
     public LayerMask whatIsGround;
 
     [Header("Crouch / Slide")]
-    public Vector3 crouchScale = new(1, 0.5f, 1);
+    public Vector3 crouchScale = new Vector3(1, 0.5f, 1);
     private Vector3 playerScale;
     private bool crouching;
-    private bool grounded;
     private bool readyToJump = true;
     private float jumpCooldown = 0.25f;
 
     private Rigidbody rb;
     private float x, y;
-    private bool jumping;
 
     private void Awake()
     {
@@ -47,10 +45,9 @@ public class NetworkedPlayerAdvanced : NetworkBehaviour
         base.OnNetworkSpawn();
         playerScale = transform.localScale;
 
-        if (!IsOwner)
-        {
-            if (playerCam) playerCam.gameObject.SetActive(false);
-        }
+        if (!IsOwner && playerCam)
+            playerCam.gameObject.SetActive(false);
+
         Cursor.lockState = CursorLockMode.Locked;
         Cursor.visible = false;
     }
@@ -62,11 +59,13 @@ public class NetworkedPlayerAdvanced : NetworkBehaviour
         HandleInput();
         HandleLook();
 
-        if (jumping && grounded && readyToJump)
-            JumpServerRpc();
+        // ? Jump input (NO grounded check here)
+        if (Input.GetButtonDown("Jump"))
+            RequestJumpServerRpc();
 
         if (Input.GetKeyDown(KeyCode.LeftControl))
             CrouchServerRpc(true);
+
         if (Input.GetKeyUp(KeyCode.LeftControl))
             CrouchServerRpc(false);
     }
@@ -81,7 +80,6 @@ public class NetworkedPlayerAdvanced : NetworkBehaviour
     {
         x = Input.GetAxisRaw("Horizontal");
         y = Input.GetAxisRaw("Vertical");
-        jumping = Input.GetButton("Jump");
     }
 
     private void HandleLook()
@@ -92,23 +90,19 @@ public class NetworkedPlayerAdvanced : NetworkBehaviour
         xRotation -= mouseY;
         xRotation = Mathf.Clamp(xRotation, -90f, 90f);
 
-        // Calculate yaw and apply to both orientation (for movement) and camera (for view)
         float yaw = orientation.eulerAngles.y + mouseX;
 
         orientation.rotation = Quaternion.Euler(0f, yaw, 0f);
         playerCam.rotation = Quaternion.Euler(xRotation, yaw, 0f);
 
-        if (IsOwner)
-            SendYawServerRpc(yaw);
+        SendYawServerRpc(yaw);
     }
-
 
     [ServerRpc]
     private void MoveServerRpc(float inputX, float inputY)
     {
-        if (!rb) return;
-
         Vector3 moveDir = (orientation.forward * inputY + orientation.right * inputX).normalized;
+
         rb.AddForce(moveDir * moveSpeed * Time.fixedDeltaTime);
 
         CounterMovement(inputX, inputY);
@@ -116,15 +110,18 @@ public class NetworkedPlayerAdvanced : NetworkBehaviour
     }
 
     [ServerRpc]
-    private void JumpServerRpc()
+    private void RequestJumpServerRpc()
     {
-        if (!grounded || !readyToJump) return;
+        if (!IsGrounded() || !readyToJump) return;
+
         readyToJump = false;
 
-        rb.AddForce(Vector3.up * jumpForce * 1.5f);
+        // Reset downward velocity
         Vector3 vel = rb.velocity;
-        if (vel.y < 0.5f)
+        if (vel.y < 0)
             rb.velocity = new Vector3(vel.x, 0, vel.z);
+
+        rb.AddForce(Vector3.up * jumpForce, ForceMode.Impulse);
 
         Invoke(nameof(ResetJump), jumpCooldown);
     }
@@ -133,11 +130,13 @@ public class NetworkedPlayerAdvanced : NetworkBehaviour
     private void CrouchServerRpc(bool state)
     {
         crouching = state;
+
         if (state)
         {
             transform.localScale = crouchScale;
             transform.position -= new Vector3(0, 0.5f, 0);
-            if (rb.velocity.magnitude > 0.5f && grounded)
+
+            if (rb.velocity.magnitude > 0.5f && IsGrounded())
                 rb.AddForce(orientation.forward * slideForce);
         }
         else
@@ -151,11 +150,13 @@ public class NetworkedPlayerAdvanced : NetworkBehaviour
     private void SendYawServerRpc(float yaw)
     {
         serverYaw.Value = yaw;
+
+        // Apply immediately on server too
+        orientation.rotation = Quaternion.Euler(0f, yaw, 0f);
     }
 
     private void LateUpdate()
     {
-        // Remote players smoothly rotate based on server data
         if (!IsOwner)
         {
             Quaternion targetRot = Quaternion.Euler(0, serverYaw.Value, 0);
@@ -167,31 +168,34 @@ public class NetworkedPlayerAdvanced : NetworkBehaviour
 
     private void CounterMovement(float x, float y)
     {
-        if (!grounded) return;
+        if (!IsGrounded()) return;
 
         Vector2 mag = new(rb.velocity.x, rb.velocity.z);
+
         if (Mathf.Abs(mag.x) > maxSpeed) x = 0;
         if (Mathf.Abs(mag.y) > maxSpeed) y = 0;
 
-        rb.AddForce(moveSpeed * Time.deltaTime * -rb.velocity.normalized * (crouching ? slideCounterMovement : counterMovement));
+        rb.AddForce(moveSpeed * Time.deltaTime * -rb.velocity.normalized *
+            (crouching ? slideCounterMovement : counterMovement));
+    }
+
+    private bool IsGrounded()
+    {
+        Debug.DrawRay(transform.position + Vector3.up * 0.1f, Vector3.down * 1.3f, Color.red);
+
+        return Physics.Raycast(
+            transform.position + Vector3.up * 0.1f,
+            Vector3.down,
+            1.3f,
+            whatIsGround
+        );
     }
 
     private void OnTriggerEnter(Collider other)
     {
-        if(other.gameObject.CompareTag("Respawn"))
+        if (other.CompareTag("Respawn"))
         {
-            Vector3 newPos = new Vector3(0, 0, 0);
-            transform.position = newPos;
+            transform.position = Vector3.zero;
         }
-    }
-    private void OnCollisionStay(Collision other)
-    {
-        if ((whatIsGround.value & (1 << other.gameObject.layer)) == 0) return;
-        grounded = true;
-    }
-
-    private void OnCollisionExit(Collision other)
-    {
-        grounded = false;
     }
 }
